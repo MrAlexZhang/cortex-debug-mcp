@@ -1,0 +1,88 @@
+{
+  "name": "cortex-mcp-bridge",
+  "displayName": "Cortex-Debug MCP Bridge",
+  "description": "Exposes a local MCP server so Claude Code (and other AI tools) can read live debug state from Cortex-Debug sessions — variables, registers, memory, call stack.",
+  "version": "0.3.0",
+  "publisher": "paulopalaoro",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/cortex-mcp-bridge"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Debuggers", "Other"],
+  "keywords": ["cortex-debug", "mcp", "claude", "stm32", "embedded", "arm", "debug"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onDebugType:cortex-debug",
+    "onDebugType:platformio-debug",
+    "onCommand:cortex-mcp-bridge.startServer",
+    "onCommand:cortex-mcp-bridge.stopServer"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cortex-mcp-bridge.startServer",
+        "title": "Cortex MCP: Start Bridge Server"
+      },
+      {
+        "command": "cortex-mcp-bridge.stopServer",
+        "title": "Cortex MCP: Stop Bridge Server"
+      },
+      {
+        "command": "cortex-mcp-bridge.copyMcpConfig",
+        "title": "Cortex MCP: Copy .mcp.json config to clipboard"
+      },
+      {
+        "command": "cortex-mcp-bridge.showStatus",
+        "title": "Cortex MCP: Show Server Status"
+      },
+      {
+        "command": "cortex-mcp-bridge.resetPermission",
+        "title": "Cortex MCP: Reset Auto-Start Permission"
+      }
+    ],
+    "configuration": {
+      "title": "Cortex MCP Bridge",
+      "properties": {
+        "cortexMcpBridge.port": {
+          "type": "number",
+          "default": 7580,
+          "description": "Local TCP port for the MCP HTTP/SSE server. If the port is busy, the extension tries the next available port automatically."
+        },
+        "cortexMcpBridge.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the MCP server when a Cortex-Debug or PlatformIO debug session starts."
+        },
+        "cortexMcpBridge.logLevel": {
+          "type": "string",
+          "enum": ["off", "info", "debug"],
+          "default": "info",
+          "description": "Log verbosity in the Output panel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p . --noEmit",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "vsce package --no-dependencies",
+    "install-ext": "code --install-extension cortex-mcp-bridge-0.1.0.vsix"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}
