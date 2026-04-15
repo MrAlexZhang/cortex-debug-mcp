@@ -2,7 +2,7 @@
   "name": "cortex-mcp-bridge",
   "displayName": "Cortex-Debug MCP Bridge",
   "description": "Exposes a local MCP server so Claude Code (and other AI tools) can read live debug state from Cortex-Debug sessions — variables, registers, memory, call stack.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "paulopalaoro",
   "license": "MIT",
   "repository": {

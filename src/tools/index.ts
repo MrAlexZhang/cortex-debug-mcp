@@ -13,9 +13,11 @@ import { registerGdbCommand } from './gdbCommand';
 import { registerGetSessionInfo } from './getSessionInfo';
 import { registerReadLiveMemory } from './readLiveMemory';
 import { registerRemoveBreakpoint } from './removeBreakpoint';
+import { registerGetSymbols } from './getSymbols';
 
 export function registerAllTools(server: McpServer) {
   registerGetSessionInfo(server);
+  registerGetSymbols(server);
   registerGetCallStack(server);
   registerGetVariables(server);
   registerExpandVariable(server);
