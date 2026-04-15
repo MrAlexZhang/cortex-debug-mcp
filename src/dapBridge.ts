@@ -212,16 +212,62 @@ export async function stepOut(): Promise<void> {
 
 // ── Breakpoints ───────────────────────────────────────────────────────────────
 
+// Track active breakpoints per file so add/remove work correctly
+// (DAP setBreakpoints replaces the entire list for a file)
+const breakpointMap = new Map<string, Set<number>>();
+
 export async function setBreakpoint(
   filePath: string,
   line: number
 ): Promise<unknown> {
   const session = getSession();
-  logger.debug(`setBreakpoint ${filePath}:${line}`);
+  if (!breakpointMap.has(filePath)) breakpointMap.set(filePath, new Set());
+  breakpointMap.get(filePath)!.add(line);
+  const lines = Array.from(breakpointMap.get(filePath)!);
+  logger.debug(`setBreakpoint ${filePath}:${line} — active lines: [${lines}]`);
   return session.customRequest('setBreakpoints', {
     source: { path: filePath },
-    breakpoints: [{ line }]
+    breakpoints: lines.map(l => ({ line: l }))
   });
+}
+
+export async function removeBreakpoint(
+  filePath: string,
+  line: number
+): Promise<unknown> {
+  const session = getSession();
+  const lines = breakpointMap.get(filePath);
+  if (lines) {
+    lines.delete(line);
+    if (lines.size === 0) breakpointMap.delete(filePath);
+  }
+  const remaining = lines ? Array.from(lines) : [];
+  logger.debug(`removeBreakpoint ${filePath}:${line} — remaining: [${remaining}]`);
+  return session.customRequest('setBreakpoints', {
+    source: { path: filePath },
+    breakpoints: remaining.map(l => ({ line: l }))
+  });
+}
+
+export async function clearBreakpoints(filePath?: string): Promise<void> {
+  const session = getSession();
+  if (filePath) {
+    breakpointMap.delete(filePath);
+    await session.customRequest('setBreakpoints', {
+      source: { path: filePath },
+      breakpoints: []
+    });
+    logger.debug(`clearBreakpoints ${filePath}`);
+  } else {
+    for (const [fp] of breakpointMap) {
+      await session.customRequest('setBreakpoints', {
+        source: { path: fp },
+        breakpoints: []
+      });
+    }
+    breakpointMap.clear();
+    logger.debug('clearBreakpoints (all files)');
+  }
 }
 
 // ── GDB / MI command passthrough ──────────────────────────────────────────────

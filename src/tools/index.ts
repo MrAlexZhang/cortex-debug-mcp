@@ -12,6 +12,7 @@ import { registerStepOver } from './stepOver';
 import { registerGdbCommand } from './gdbCommand';
 import { registerGetSessionInfo } from './getSessionInfo';
 import { registerReadLiveMemory } from './readLiveMemory';
+import { registerRemoveBreakpoint } from './removeBreakpoint';
 
 export function registerAllTools(server: McpServer) {
   registerGetSessionInfo(server);
@@ -22,6 +23,7 @@ export function registerAllTools(server: McpServer) {
   registerGetMemory(server);
   registerEvaluate(server);
   registerSetBreakpoint(server);
+  registerRemoveBreakpoint(server);
   registerContinueExecution(server);
   registerPauseExecution(server);
   registerStepOver(server);
