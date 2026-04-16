@@ -4,14 +4,14 @@ let outputChannel: vscode.OutputChannel | undefined;
 
 export function getChannel(): vscode.OutputChannel {
   if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel('Cortex MCP Bridge');
+    outputChannel = vscode.window.createOutputChannel('Embedded AI Debug');
   }
   return outputChannel;
 }
 
 function level(): string {
   return vscode.workspace
-    .getConfiguration('cortexMcpBridge')
+    .getConfiguration('embeddedAiDebug')
     .get<string>('logLevel', 'info');
 }
 

@@ -8,6 +8,8 @@
 
 import * as vscode from 'vscode';
 import { McpHttpServer } from './mcpServer';
+import { PeripheralTesterPanel } from './panels/PeripheralTesterPanel';
+import { OpenOcdManager } from './openocdManager';
 import * as logger from './logger';
 
 let server: McpHttpServer | undefined;
@@ -16,11 +18,11 @@ let statusBarItem: vscode.StatusBarItem | undefined;
 export async function activate(context: vscode.ExtensionContext) {
   logger.info('Cortex MCP Bridge activating...');
 
-  const cfg = () => vscode.workspace.getConfiguration('cortexMcpBridge');
+  const cfg = () => vscode.workspace.getConfiguration('embeddedAiDebug');
 
   // ── Status bar item ─────────────────────────────────────────────────────────
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
-  statusBarItem.command = 'cortex-mcp-bridge.showStatus';
+  statusBarItem.command = 'embedded-ai-debug.showStatus';
   updateStatusBar('stopped');
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
@@ -86,7 +88,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Commands ─────────────────────────────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('cortex-mcp-bridge.startServer', async () => {
+    vscode.commands.registerCommand('embedded-ai-debug.startServer', async () => {
       await ensureStarted();
       if (server?.running) {
         vscode.window.showInformationMessage(
@@ -96,14 +98,14 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('cortex-mcp-bridge.stopServer', () => {
+    vscode.commands.registerCommand('embedded-ai-debug.stopServer', () => {
       server?.stop();
       server = undefined;
       updateStatusBar('stopped');
       vscode.window.showInformationMessage('Cortex MCP Bridge stopped.');
     }),
 
-    vscode.commands.registerCommand('cortex-mcp-bridge.copyMcpConfig', async () => {
+    vscode.commands.registerCommand('embedded-ai-debug.copyMcpConfig', async () => {
       if (!server?.running) {
         vscode.window.showWarningMessage('Server is not running. Start it first.');
         return;
@@ -127,7 +129,7 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     }),
 
-    vscode.commands.registerCommand('cortex-mcp-bridge.showStatus', () => {
+    vscode.commands.registerCommand('embedded-ai-debug.showStatus', () => {
       const channel = logger.getChannel();
       channel.show(true);
       if (server?.running) {
@@ -195,9 +197,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Reset permission command ─────────────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('cortex-mcp-bridge.resetPermission', async () => {
+    vscode.commands.registerCommand('embedded-ai-debug.resetPermission', async () => {
       await context.globalState.update(PERM_KEY, undefined);
       vscode.window.showInformationMessage('Auto-start permission reset. You will be asked again on the next debug session.');
+    }),
+
+    vscode.commands.registerCommand('embedded-ai-debug.openPeripheralTester', () => {
+      PeripheralTesterPanel.createOrShow(context);
     })
   );
 
@@ -229,6 +235,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   server?.stop();
+  OpenOcdManager.instance.stop();
   logger.dispose();
 }
 
