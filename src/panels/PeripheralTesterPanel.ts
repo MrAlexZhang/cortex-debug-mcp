@@ -600,23 +600,25 @@ export class PeripheralTesterPanel {
     const MCR = base + CAN_REG.MCR;
     const BTR = base + CAN_REG.BTR;
     const MSR = base + CAN_REG.MSR;
-
-    // Enter initialization mode: INRQ=1, SLEEP=0
-    const mcr0 = await mdw1(MCR);
-    await mww(MCR, (mcr0 & ~0x2) | 0x1);
-    await openocdBatch(['sleep 5']);  // wait for INAK
+    const hex = (n: number) => `0x${(n >>> 0).toString(16)}`;
 
     // BTR[9:0]=prescaler-1, [19:16]=BS1-1, [22:20]=BS2-1, [25:24]=SJW-1(=0)
     const btr = ((psc - 1) & 0x3FF)
               | (((bs1 - 1) & 0xF) << 16)
               | (((bs2 - 1) & 0x7) << 20);
-    await mww(BTR, btr);
 
-    // Leave initialization mode
-    await mww(MCR, mcr0 & ~0x3);
-    await openocdBatch(['sleep 5']);
-
-    const msr = await mdw1(MSR);
+    // Single batch: enter init mode → wait → write BTR → exit init → wait → read MSR
+    // mmw(MCR, INRQ=1, SLEEP=0) uses atomic set/clear so we don't need to read MCR first.
+    const results = await openocdBatch([
+      `mmw ${hex(MCR)} 0x1 0x2`,   // INRQ=1, SLEEP=0
+      'sleep 5',
+      `mww ${hex(BTR)} ${hex(btr)}`,
+      `mmw ${hex(MCR)} 0 0x3`,     // clear INRQ + SLEEP (leave init mode)
+      'sleep 5',
+      `mdw ${hex(MSR)} 1`,
+    ]);
+    const msrMatch = results[5].match(/0x[0-9a-f]+:\s+([0-9a-f]+)/i);
+    const msr = msrMatch ? (parseInt(msrMatch[1], 16) >>> 0) : 0;
     this._send('result', 'initCan', {
       ok: true, peripheral: periphName,
       BTR: `0x${btr.toString(16).padStart(8, '0')}`,
@@ -665,45 +667,53 @@ export class PeripheralTesterPanel {
     const base = chip.peripherals['RTC'];
     if (!base) throw new Error(`RTC not in peripheral map for ${chip.family}`);
 
-    // Enable PWR clock + DBP so backup domain registers are accessible
-    await mww(chip.rcc.apb1EnReg, (await mdw1(chip.rcc.apb1EnReg)) | (1 << 28));
-    await mww(0x40007000, (await mdw1(0x40007000)) | (1 << 8));
-
-    // Try BYPSHAD (bypass shadow registers) — available on F2/F4/F7/L4/G4, not F0/F1/G0
-    // RTC_CR bit 5 = BYPSHAD. Set it, read TR+DR, then clear it.
     const CR  = base + RTC_REG.CR;
     const ISR = base + RTC_REG.ISR;
     const WPR = base + RTC_REG.WPR;
+    const TR  = base + RTC_REG.TR;
+    const DR  = base + RTC_REG.DR;
+    const hex = (n: number) => `0x${(n >>> 0).toString(16)}`;
+    const parseWord = (resp: string): number => {
+      const m = resp.match(/0x[0-9a-f]+:\s+([0-9a-f]+)/i);
+      return m ? (parseInt(m[1], 16) >>> 0) : 0;
+    };
 
-    let usedBypsshad = false;
-    let tr = 0, dr = 0;
+    // ── Batch 1: read current state (PWR_CR, APB1EN, CR, ISR) in one connection ──
+    const apb1En = chip.rcc.apb1EnReg;
+    const [apb1Resp, pwrCrResp, crResp] = await openocdBatch([
+      `mdw ${hex(apb1En)} 1`,
+      `mdw ${hex(0x40007000)} 1`,
+      `mdw ${hex(CR)} 1`,
+    ]);
+    const apb1EnVal = parseWord(apb1Resp);
+    const pwrCrVal  = parseWord(pwrCrResp);
+    const cr0       = parseWord(crResp);
+    const usedBypsshad = !(cr0 & (1 << 5));
 
-    // Unlock WPR to allow CR write
-    await mww(WPR, 0xCA);
-    await mww(WPR, 0x53);
+    // ── Batch 2: enable PWR clock, DBP, unlock WPR, set BYPSHAD, clear RSF ──
+    const setupCmds: string[] = [
+      `mww ${hex(apb1En)} ${hex(apb1EnVal | (1 << 28))}`,
+      `mww ${hex(0x40007000)} ${hex(pwrCrVal | (1 << 8))}`,
+      `mww ${hex(WPR)} 0xCA`,
+      `mww ${hex(WPR)} 0x53`,
+    ];
+    if (usedBypsshad) setupCmds.push(`mww ${hex(CR)} ${hex(cr0 | (1 << 5))}`);
+    setupCmds.push(`mww ${hex(ISR)} 0`);  // clear RSF (write 0 clears all clearable bits)
+    setupCmds.push(`sleep 200`);          // wait for shadow sync (much longer than 20× polling)
+    setupCmds.push(`mdw ${hex(ISR)} 1`);
+    setupCmds.push(`mdw ${hex(TR)} 1`);
+    setupCmds.push(`mdw ${hex(DR)} 1`);
+    if (usedBypsshad) setupCmds.push(`mww ${hex(CR)} ${hex(cr0)}`);
+    setupCmds.push(`mww ${hex(WPR)} 0xFF`);
 
-    // Set BYPSHAD (bit 5 of CR)
-    const cr0 = await mdw1(CR);
-    if (!(cr0 & (1 << 5))) {
-      await mww(CR, cr0 | (1 << 5));
-      usedBypsshad = true;
-    }
-
-    // Clear RSF (bit 5 of ISR) and wait for it to be set (shadow sync, as fallback)
-    await mww(ISR, (await mdw1(ISR)) & ~(1 << 5));
-    let rsfOk = false;
-    for (let i = 0; i < 20; i++) {
-      await openocdBatch(['sleep 10']);
-      if ((await mdw1(ISR)) & (1 << 5)) { rsfOk = true; break; }
-    }
-
-    // Always read TR before DR (TR read latches the DR shadow register)
-    tr = await mdw1(base + RTC_REG.TR);
-    dr = await mdw1(base + RTC_REG.DR);
-
-    // Restore CR (clear BYPSHAD if we set it) and lock WPR
-    if (usedBypsshad) await mww(CR, cr0);
-    await mww(WPR, 0xFF);
+    const results = await openocdBatch(setupCmds);
+    // Responses of interest are the last mdw ones — find them by position
+    const isrResp = results[usedBypsshad ? 7 : 6];
+    const trResp  = results[usedBypsshad ? 8 : 7];
+    const drResp  = results[usedBypsshad ? 9 : 8];
+    const rsfOk = (parseWord(isrResp) & (1 << 5)) !== 0;
+    const tr = parseWord(trResp);
+    const dr = parseWord(drResp);
 
     // TR: [3:0]=sec units, [6:4]=sec tens, [11:8]=min units, [14:12]=min tens,
     //     [19:16]=hour units, [21:20]=hour tens, [22]=PM (12h mode)
@@ -760,14 +770,17 @@ export class PeripheralTesterPanel {
     const index = parseInt(msg.index as string);
     if (index < 0 || index > 19) throw new Error('BKP index must be 0–19');
 
-    // Enable PWR clock (bit 28 in APB1ENR on all supported families)
-    await mww(chip.rcc.apb1EnReg, (await mdw1(chip.rcc.apb1EnReg)) | (1 << 28));
-    // Set DBP (bit 8 in PWR_CR) to allow backup-domain access
-    const PWR_CR = 0x40007000;
-    await mww(PWR_CR, (await mdw1(PWR_CR)) | (1 << 8));
-
     const addr = base + RTC_REG.BKP0R + index * 4;
-    const val  = await mdw1(addr);
+    const hex = (n: number) => `0x${(n >>> 0).toString(16)}`;
+
+    // Single batch: enable PWR clock, set DBP, read BKP register
+    const results = await openocdBatch([
+      `mmw ${hex(chip.rcc.apb1EnReg)} 0x10000000 0`,  // set bit 28 (PWREN)
+      `mmw ${hex(0x40007000)} 0x100 0`,               // set bit 8 (DBP)
+      `mdw ${hex(addr)} 1`,
+    ]);
+    const m = results[2].match(/0x[0-9a-f]+:\s+([0-9a-f]+)/i);
+    const val = m ? (parseInt(m[1], 16) >>> 0) : 0;
 
     this._send('result', 'rtcBkpRead', {
       ok: true, index,
@@ -789,14 +802,18 @@ export class PeripheralTesterPanel {
     const value = parseInt(valStr.startsWith('0x') ? valStr : `0x${valStr}`, 16);
     if (isNaN(value)) throw new Error(`Invalid value: ${valStr}`);
 
-    // Enable PWR + backup domain write access
-    await mww(chip.rcc.apb1EnReg, (await mdw1(chip.rcc.apb1EnReg)) | (1 << 28));
-    const PWR_CR = 0x40007000;
-    await mww(PWR_CR, (await mdw1(PWR_CR)) | (1 << 8));
-
     const addr = base + RTC_REG.BKP0R + index * 4;
-    const prev = await mdw1(addr);
-    await mww(addr, value);
+    const hex = (n: number) => `0x${(n >>> 0).toString(16)}`;
+
+    // Single batch: enable PWR + DBP, read previous, write new
+    const results = await openocdBatch([
+      `mmw ${hex(chip.rcc.apb1EnReg)} 0x10000000 0`,  // PWREN
+      `mmw ${hex(0x40007000)} 0x100 0`,               // DBP
+      `mdw ${hex(addr)} 1`,
+      `mww ${hex(addr)} ${hex(value)}`,
+    ]);
+    const m = results[2].match(/0x[0-9a-f]+:\s+([0-9a-f]+)/i);
+    const prev = m ? (parseInt(m[1], 16) >>> 0) : 0;
 
     this._send('result', 'rtcBkpWrite', {
       ok: true, index,
@@ -827,103 +844,105 @@ export class PeripheralTesterPanel {
     const tr  = (bcd(sec) & 0x7F) | ((bcd(min) & 0x7F) << 8) | ((bcd(hour) & 0x3F) << 16);
     const dr  = (bcd(day) & 0x3F) | ((bcd(month) & 0x1F) << 8) | ((wday & 0x7) << 13) | ((bcd(year) & 0xFF) << 16);
 
-    // ── Step 1: PWR clock + DBP ──────────────────────────────────────────────
-    await mww(chip.rcc.apb1EnReg, (await mdw1(chip.rcc.apb1EnReg)) | (1 << 28));
-    const PWR_CR = 0x40007000;
-    await mww(PWR_CR, (await mdw1(PWR_CR)) | (1 << 8));
-
-    // ── Step 2: RCC_BDCR — enable LSI/LSE + RTCEN if not configured ─────────
-    // BDCR offset: 0x70 for F4/F7/H7 (RCC base 0x40023800), 0x20 for others
     const bdcrOff = chip.rcc.base === 0x40023800 ? 0x70 : 0x20;
+    const csrOff  = chip.rcc.base === 0x40023800 ? 0x74 : 0x24;
+    const cfgrOff = chip.rcc.base === 0x40023800 ? 0x08 : 0x04;  // RCC_CFGR (for RTCPRE on F4)
+    const crOff   = chip.rcc.base === 0x40023800 ? 0x00 : 0x00;  // RCC_CR (for HSEON/HSERDY)
     const RCC_BDCR = chip.rcc.base + bdcrOff;
-    let bdcr = await mdw1(RCC_BDCR);
-
-    const rtcSel = (bdcr >> 8) & 0x3;  // RTCSEL[1:0]
-    const rtcEn  = (bdcr >> 15) & 0x1; // RTCEN
-
-    let clockSrc = 'unknown';
-
-    if (rtcSel === 0x1 && ((bdcr >> 1) & 0x1)) {
-      // LSE already selected and ready
-      clockSrc = 'LSE';
-    } else if (rtcSel === 0x2) {
-      // LSI already selected
-      clockSrc = 'LSI';
-    } else {
-      // Need to configure — use LSI (always available, no external crystal needed)
-      // Enable LSI: LSION is bit 0 of RCC_CSR
-      const csrOff = chip.rcc.base === 0x40023800 ? 0x74 : 0x24;
-      const RCC_CSR = chip.rcc.base + csrOff;
-      await mww(RCC_CSR, (await mdw1(RCC_CSR)) | 0x1);  // LSION=1
-      // Wait for LSIRDY (bit 1)
-      let lsiRdy = false;
-      for (let i = 0; i < 20; i++) {
-        await openocdBatch(['sleep 5']);
-        if ((await mdw1(RCC_CSR)) & 0x2) { lsiRdy = true; break; }
-      }
-      if (!lsiRdy) throw new Error('LSI não ficou pronto (LSIRDY timeout). Verifique o chip.');
-
-      // If RTCSEL was previously set to something else, must reset backup domain first
-      if (rtcSel !== 0 && rtcSel !== 0x2) {
-        // BDRST (bit 16): reset backup domain to change RTCSEL
-        await mww(RCC_BDCR, bdcr | (1 << 16));
-        await mww(RCC_BDCR, bdcr & ~(1 << 16));
-        bdcr = await mdw1(RCC_BDCR);
-      }
-
-      // Set RTCSEL = 10 (LSI)
-      bdcr = (bdcr & ~(0x3 << 8)) | (0x2 << 8);
-      await mww(RCC_BDCR, bdcr);
-      clockSrc = 'LSI (configurado agora)';
-    }
-
-    // Ensure RTCEN (bit 15)
-    if (!rtcEn) {
-      bdcr |= (1 << 15);
-      await mww(RCC_BDCR, bdcr);
-    }
-
-    // ── Step 3: Unlock RTC write protection ──────────────────────────────────
+    const RCC_CSR  = chip.rcc.base + csrOff;
+    const RCC_CFGR = chip.rcc.base + cfgrOff;
+    const RCC_CR   = chip.rcc.base + crOff;
+    const PWR_CR   = 0x40007000;
     const WPR = base + RTC_REG.WPR;
-    const ISR  = base + RTC_REG.ISR;
-    await mww(WPR, 0xCA);
-    await mww(WPR, 0x53);
+    const ISR = base + RTC_REG.ISR;
+    const hex = (n: number) => `0x${(n >>> 0).toString(16)}`;
+    const parseWord = (resp: string): number => {
+      const m = resp.match(/0x[0-9a-f]+:\s+([0-9a-f]+)/i);
+      return m ? (parseInt(m[1], 16) >>> 0) : 0;
+    };
 
-    // ── Step 4: Init mode ────────────────────────────────────────────────────
-    await mww(ISR, (await mdw1(ISR)) | (1 << 7));  // INIT=1
-    let initf = false;
-    for (let i = 0; i < 15; i++) {
-      await openocdBatch(['sleep 5']);
-      if ((await mdw1(ISR)) & (1 << 6)) { initf = true; break; }
+    // ── Clock source configuration ──────────────────────────────────────────
+    // RTCSEL[9:8]: 00=no clock, 01=LSE, 10=LSI, 11=HSE_RTC
+    // For accurate 1Hz:
+    //   LSE  (32768 Hz):    PREDIV_A=127, PREDIV_S=255  → 32768/(128*256)=1Hz exactly
+    //   LSI  (~32000 Hz):   PREDIV_A=127, PREDIV_S=249  → 32000/(128*250)=1Hz nominal
+    //   HSE/25 (1 MHz):     PREDIV_A=99,  PREDIV_S=9999 → 1000000/(100*10000)=1Hz exactly
+    const clockSrc = (msg.clockSrc as string) || 'LSE';
+    let rtcSelBits: number;
+    let predivA: number;
+    let predivS: number;
+    const clockSetupCmds: string[] = [];
+
+    if (clockSrc === 'LSE') {
+      rtcSelBits = 0x1 << 8;
+      predivA = 127;
+      predivS = 255;
+      // Enable LSE (LSEON=bit0 of RCC_BDCR), wait for LSERDY (bit1)
+      clockSetupCmds.push(`mmw ${hex(RCC_BDCR)} 0x1 0`);  // LSEON=1
+      clockSetupCmds.push('sleep 3000');                    // LSE crystal can take up to 2s to stabilize
+    } else if (clockSrc === 'HSE_DIV25') {
+      rtcSelBits = 0x3 << 8;
+      predivA = 99;
+      predivS = 9999;
+      // Enable HSE (HSEON=bit16 of RCC_CR), wait for HSERDY (bit17)
+      clockSetupCmds.push(`mmw ${hex(RCC_CR)} 0x10000 0`);  // HSEON=1
+      clockSetupCmds.push('sleep 100');
+      // RCC_CFGR RTCPRE = bits [20:16], divides HSE down to ≤1 MHz before RTC
+      // For 25 MHz HSE: RTCPRE=25 → 1 MHz
+      clockSetupCmds.push(`mmw ${hex(RCC_CFGR)} 0x190000 0x1F0000`);  // RTCPRE = 25 (0x19)
+    } else {
+      // LSI
+      rtcSelBits = 0x2 << 8;
+      predivA = 127;
+      predivS = 249;
+      clockSetupCmds.push(`mmw ${hex(RCC_CSR)} 1 0`);  // LSION=1
+      clockSetupCmds.push('sleep 50');
     }
-    if (!initf) {
-      await mww(WPR, 0xFF);
-      throw new Error(`RTC INITF timeout (clock=${clockSrc}). ISR=0x${(await mdw1(ISR)).toString(16)}`);
+    const bdcrVal = rtcSelBits | (1 << 15);  // RTCSEL + RTCEN
+
+    // ── Batch 1: halt + PWR/DBP + backup-domain reset + start clock + RTCSEL+RTCEN ──
+    await openocdBatch([
+      'halt',
+      `mmw ${hex(chip.rcc.apb1EnReg)} 0x10000000 0`,  // PWREN
+      `mmw ${hex(PWR_CR)} 0x100 0`,                   // DBP
+      `mmw ${hex(RCC_BDCR)} 0x10000 0`,               // BDRST=1
+      'sleep 10',
+      `mmw ${hex(RCC_BDCR)} 0 0x10000`,               // BDRST=0
+      ...clockSetupCmds,
+      // Atomically set RTCSEL + RTCEN without clearing LSEON/HSEON/LSION bits
+      `mmw ${hex(RCC_BDCR)} ${hex(bdcrVal)} 0x8300`,   // set RTCSEL+RTCEN, clear only other RTCSEL bits
+      'sleep 10',                                     // let RTC clock settle
+    ], 10_000);
+
+    // ── Batch 2: unlock WPR + enter INIT mode + wait for INITF ──
+    // Single connection, polling done inside OpenOCD via sleep + read sequence.
+    const initResults = await openocdBatch([
+      `mww ${hex(WPR)} 0xCA`,
+      `mww ${hex(WPR)} 0x53`,
+      `mww ${hex(ISR)} 0x80`,                         // INIT=1
+      'sleep 200',                                    // wait up to 200ms for INITF
+      `mdw ${hex(ISR)} 1`,
+    ]);
+    const isrAfterInit = parseWord(initResults[4]);
+    if (!(isrAfterInit & (1 << 6))) {
+      const bdcrDbg = parseWord((await openocdBatch([`mdw ${hex(RCC_BDCR)} 1`]))[0]);
+      await openocdBatch([`mww ${hex(WPR)} 0xFF`]);   // lock WPR
+      throw new Error(`RTC INITF timeout (clock=${clockSrc}). ISR=0x${isrAfterInit.toString(16)} BDCR=0x${bdcrDbg.toString(16)}`);
     }
 
-    // ── Step 5: Set prescalers for LSI (40 kHz typical) ─────────────────────
-    // PREDIV_A=127 (async), PREDIV_S=312 → fRTC ≈ 40000/((127+1)*(312+1)) ≈ 1 Hz
-    // For LSE (32768 Hz): PREDIV_A=127, PREDIV_S=255 → exact 1 Hz
-    const predivS = (clockSrc === 'LSE') ? 255 : 312;
-    await mww(base + RTC_REG.PRER, (127 << 16) | predivS);
-
-    // ── Step 6: Write time and date ──────────────────────────────────────────
-    await mww(base + RTC_REG.TR, tr);
-    await mww(base + RTC_REG.DR, dr);
-
-    // ── Step 7: Exit init mode + lock ────────────────────────────────────────
-    await mww(ISR, (await mdw1(ISR)) & ~(1 << 7));
-    await mww(WPR, 0xFF);
-
-    // ── Step 8: Readback — wait for RSF then verify TR ───────────────────────
-    let trBack = 0;
-    for (let i = 0; i < 20; i++) {
-      await openocdBatch(['sleep 10']);
-      if ((await mdw1(base + RTC_REG.ISR)) & (1 << 5)) {
-        trBack = await mdw1(base + RTC_REG.TR);
-        break;
-      }
-    }
+    // ── Batch 3: write PRER, TR, DR, exit INIT, lock WPR, wait RSF, read back ──
+    const writeResults = await openocdBatch([
+      `mww ${hex(base + RTC_REG.PRER)} ${hex((predivA << 16) | predivS)}`,
+      `mww ${hex(base + RTC_REG.TR)} ${hex(tr)}`,
+      `mww ${hex(base + RTC_REG.DR)} ${hex(dr)}`,
+      `mmw ${hex(ISR)} 0 0x80`,                       // INIT=0 (exit init mode)
+      `mww ${hex(WPR)} 0xFF`,                         // lock WPR
+      'sleep 200',                                    // wait for RSF
+      `mdw ${hex(ISR)} 1`,
+      `mdw ${hex(base + RTC_REG.TR)} 1`,
+    ]);
+    const rsfOk = (parseWord(writeResults[6]) & (1 << 5)) !== 0;
+    const trBack = rsfOk ? parseWord(writeResults[7]) : 0;
 
     const pad2 = (n: number) => String(n).padStart(2, '0');
     const wdays = ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -959,7 +978,10 @@ export class PeripheralTesterPanel {
   private async _eraseFlash(): Promise<void> {
     // halt first so the chip is not executing from flash during erase
     await openocdSend('halt');
-    const resp = await openocdSend('flash erase_sector 0 0 last');
+    // probe flash bank 0 to ensure OpenOCD knows the flash layout
+    await openocdSend('flash probe 0');
+    // Full mass_erase on STM32F4 (up to 1 MB) can take 15-30s; allow 60s timeout.
+    const resp = await openocdSend('stm32f4x mass_erase 0', 60000);
     this._send('result', 'eraseFlash', { ok: true, response: resp.trim() });
   }
 
@@ -1087,12 +1109,37 @@ export class PeripheralTesterPanel {
   .gpio-btns button { flex: 1; }
 
   /* ── log ── */
-  #log {
+  .log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-top: 16px;
+    padding: 4px 10px;
+    background: var(--vscode-editorWidget-background, #252526);
+    border: 1px solid var(--vscode-panel-border);
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+  }
+  .log-header button {
+    font-size: 11px;
+    padding: 2px 10px;
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #cccccc);
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .log-header button:hover {
+    background: var(--vscode-button-secondaryHoverBackground, #45494e);
+  }
+  #log {
     background: var(--vscode-terminal-background, #1e1e1e);
     color: var(--vscode-terminal-foreground, #ccc);
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
+    border-radius: 0 0 4px 4px;
     padding: 8px 10px;
     font-family: 'Cascadia Code', 'Courier New', monospace;
     font-size: 12px;
@@ -1105,7 +1152,6 @@ export class PeripheralTesterPanel {
   .log-ok    { color: #4ec9b0; }
   .log-err   { color: #f48771; }
   .log-info  { color: #9cdcfe; }
-  #log-clear { float: right; font-size: 11px; opacity: 0.6; cursor: pointer; background: none; border: none; color: inherit; padding: 0; }
 
   /* ── section header ── */
   .section-title {
@@ -1382,6 +1428,12 @@ export class PeripheralTesterPanel {
     Faz unlock automático (PWR DBP + WPR 0xCA→0x53), entra em init mode, escreve TR+DR e sai.
   </p>
   <div class="form-grid">
+    <label>Clock source</label>
+    <select id="rtc-clock-src" style="width:220px">
+      <option value="LSE">LSE — cristal 32.768 kHz (±0.1s/dia)</option>
+      <option value="LSI">LSI — RC interno 32 kHz (±10min/dia)</option>
+      <option value="HSE_DIV25">HSE ÷25 — precisão do cristal HSE</option>
+    </select>
     <label>Hora (HH:MM:SS)</label>
     <input id="rtc-set-time" type="time" step="1" value="12:00:00" style="width:130px">
     <label>Data (DD/MM/AAAA)</label>
@@ -1465,8 +1517,11 @@ export class PeripheralTesterPanel {
 </div>
 
 <!-- ── Log ────────────────────────────────────────────────────────────── -->
+<div class="log-header">
+  <span>Monitor</span>
+  <button id="btn-log-clear" title="Limpa todas as mensagens do monitor">🧹 Limpar Monitor</button>
+</div>
 <div id="log"><span class="log-info">Peripheral Tester ready. Click "Detect chip" to start.</span></div>
-<button id="log-clear" id="btn-log-clear">clear log</button>
 
 <script>
 const vscode = acquireVsCodeApi();
@@ -1499,6 +1554,10 @@ function log(text, cls) {
 function clearLog() {
   document.getElementById('log').innerHTML = '';
 }
+document.getElementById('btn-log-clear').addEventListener('click', () => {
+  clearLog();
+  log('Monitor limpo.', 'log-info');
+});
 function logResult(op, data) {
   log('✓ ' + op + ': ' + JSON.stringify(data, null, 2), 'log-ok');
 }
@@ -1593,9 +1652,28 @@ btn('btn-reset').addEventListener('click', () => {
   log('→ Reset…', 'log-info');
   send({ command: 'resetTarget' });
 });
+let _erasePending = false;
+let _eraseTimer = null;
 btn('btn-erase').addEventListener('click', () => {
-  if (!window.confirm('Apagar TODA a flash?\\nO firmware será destruído.')) return;
-  log('→ Apagando flash… (halt → erase)', 'log-info');
+  if (!_erasePending) {
+    _erasePending = true;
+    btn('btn-erase').textContent = '⚠ Confirme: clique novamente em 5s';
+    btn('btn-erase').style.background = '#ff6b00';
+    log('⚠ Clique novamente em btn-erase em 5 segundos para confirmar. Toda a flash sera apagada.', 'log-err');
+    clearTimeout(_eraseTimer);
+    _eraseTimer = setTimeout(() => {
+      _erasePending = false;
+      btn('btn-erase').textContent = '🗑 Erase Flash';
+      btn('btn-erase').style.background = '';
+      log('→ Erase cancelado (timeout).', 'log-info');
+    }, 5000);
+    return;
+  }
+  clearTimeout(_eraseTimer);
+  _erasePending = false;
+  btn('btn-erase').textContent = '🗑 Erase Flash';
+  btn('btn-erase').style.background = '';
+  log('→ Apagando flash… (halt → probe → mass_erase)', 'log-info');
   send({ command: 'eraseFlash' });
 });
 
@@ -1683,7 +1761,8 @@ btn('btn-rtc-set').addEventListener('click', () => {
   // calc weekday: JS 0=Sun → STM32 7=Sun, 1=Mon..6=Sat
   const jsDay = new Date(Number(dParts[0]), Number(dParts[1]) - 1, Number(dParts[2])).getDay();
   const wday = String(jsDay === 0 ? 7 : jsDay);
-  send({ command:'rtcSet', chip:currentChip, hour, min, sec, day, month, year, wday });
+  const clockSrc = v('rtc-clock-src') || 'LSE';
+  send({ command:'rtcSet', chip:currentChip, hour, min, sec, day, month, year, wday, clockSrc });
 });
 btn('btn-rtc-now').addEventListener('click', () => {
   const n = new Date();

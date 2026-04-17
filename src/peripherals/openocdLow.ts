@@ -147,20 +147,25 @@ export async function mdb(address: number | string, count = 1): Promise<number[]
 }
 
 /**
- * Read-modify-write: sets bits[mask] = value at address.
- * Returns the new register value.
+ * Atomic bit set/clear using OpenOCD `mmw` command.
+ * `mmw address setbits clearbits` — sets bits in setbits, clears bits in clearbits.
+ * A single telnet connection, no read-modify-write race.
+ *
+ * For setBits(addr, mask, value): bits in `mask` get written with the pattern
+ * in `value`. Bits outside the mask are untouched. Bits in `mask & ~value`
+ * are cleared; bits in `mask & value` are set.
  */
 export async function setBits(
   address: number | string,
   mask: number,
   value: number
 ): Promise<number> {
-  const addrNum = typeof address === 'number' ? address : parseInt(address, 16);
-  const current = await mdwOne(addrNum);
-  const newVal = (current & ~mask) | (value & mask);
-  await mww(addrNum, newVal);
-  logger.debug(`setBits 0x${addrNum.toString(16)}: 0x${current.toString(16)} → 0x${newVal.toString(16)}`);
-  return newVal >>> 0;
+  const addr = addrHex(address);
+  const setBitsVal   = (value & mask) >>> 0;
+  const clearBitsVal = (mask & ~value) >>> 0;
+  await openocdSend(`mmw ${addr} 0x${setBitsVal.toString(16)} 0x${clearBitsVal.toString(16)}`);
+  logger.debug(`setBits ${addr}: set=0x${setBitsVal.toString(16)} clear=0x${clearBitsVal.toString(16)}`);
+  return 0;  // Return value no longer meaningful without read
 }
 
 /** Execute an OpenOCD sleep (milliseconds) — blocks the current batch connection. */

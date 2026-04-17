@@ -1,10 +1,40 @@
-# Cortex-Debug MCP Bridge
+# Embedded AI Debug
 
-A VSCode extension that exposes a local **MCP (Model Context Protocol) server** so AI assistants like **Claude Code** can read live debug state from **Cortex-Debug** and **PlatformIO** debug sessions.
+A VSCode extension with **two features** for embedded development:
+
+1. **MCP Bridge** — exposes a local MCP server so AI assistants like **Claude Code** can read live debug state (variables, registers, memory) from **Cortex-Debug** and **PlatformIO** sessions.
+2. **Peripheral Tester** — configure and drive GPIO, SPI, I2C, USART, CAN, RTC, PWM directly via OpenOCD, **without any firmware on the chip**.
+
+![Demo](https://raw.githubusercontent.com/paulopalaoro/cortex-mcp-bridge/main/images/demo.gif)
 
 ```
 STM32 / ARM MCU  ──(ST-Link/JTAG)──  Cortex-Debug  ──(DAP)──  Extension  ──(MCP/SSE)──  Claude Code
 ```
+
+---
+
+## Quick Start
+
+1. Install the extension from the VS Code Marketplace (**Embedded AI Debug** — publisher: `paulopalaoro`)
+2. Create a `.mcp.json` file in your project root (or run `Ctrl+Shift+P` → **AI Debug: Copy .mcp.json config to clipboard**)
+3. Start the MCP server manually: `Ctrl+Shift+P` → **AI Debug: Start Bridge Server**
+4. Start a Cortex-Debug or PlatformIO debug session — the server starts automatically from this point on
+5. Verify: status bar shows `$(debug-alt) MCP :7580` and `http://localhost:7580/health` returns `{"status":"ok"}`
+
+> **Note:** The server starts automatically on VS Code startup and on every debug session. Use **AI Debug: Start Bridge Server** only if you need to start it manually.
+
+---
+
+## Available Commands (`Ctrl+Shift+P`)
+
+| Command | Description |
+|---|---|
+| **AI Debug: Start Bridge Server** | Start the MCP server manually |
+| **AI Debug: Stop Bridge Server** | Stop the MCP server |
+| **AI Debug: Show Server Status** | Show current server status and port |
+| **AI Debug: Copy .mcp.json config to clipboard** | Copy the MCP config snippet for your project |
+| **AI Debug: Open Peripheral Tester** | Open the peripheral register tester UI (requires server running) |
+| **AI Debug: Reset Auto-Start Permission** | Reset the auto-start permission dialog |
 
 ---
 
@@ -75,14 +105,14 @@ code --install-extension cortex-mcp-bridge-0.1.0.vsix
 }
 ```
 
-> **Tip:** Run the command **"Cortex MCP: Copy .mcp.json config to clipboard"** from the Command Palette to generate this snippet automatically with the correct port.
+> **Tip:** Run **`Ctrl+Shift+P` → AI Debug: Copy .mcp.json config to clipboard** to generate this snippet automatically with the correct port.
 
 ### 2. Start a debug session
 
 The extension starts the MCP server automatically when a Cortex-Debug or PlatformIO debug session begins. You can also start it manually via:
 
 ```
-Ctrl+Shift+P → Cortex MCP: Start Bridge Server
+Ctrl+Shift+P → AI Debug: Start Bridge Server
 ```
 
 ### 3. Verify
@@ -117,9 +147,9 @@ Once connected, Claude Code can interact with your hardware directly. Examples:
 
 | Setting | Default | Description |
 |---|---|---|
-| `cortexMcpBridge.port` | `7580` | Preferred TCP port. Auto-increments if busy. |
-| `cortexMcpBridge.autoStart` | `true` | Start server automatically when a debug session begins |
-| `cortexMcpBridge.logLevel` | `"info"` | Log verbosity: `"off"`, `"info"`, `"debug"` |
+| `embeddedAiDebug.port` | `7580` | Preferred TCP port. Auto-increments if busy. |
+| `embeddedAiDebug.autoStart` | `true` | Start server automatically when a debug session begins |
+| `embeddedAiDebug.logLevel` | `"info"` | Log verbosity: `"off"`, `"info"`, `"debug"` |
 
 ---
 

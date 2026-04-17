@@ -230,6 +230,15 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
+  // ── Start server on VS Code startup so Claude Code always finds it ────────────
+  // Starts silently on activation (onStartupFinished) without waiting for a
+  // debug session — this ensures the MCP SSE endpoint is up before Claude Code
+  // tries to connect when the workspace opens.
+  if (cfg().get<boolean>('autoStart', true) &&
+      context.globalState.get<string>(PERM_KEY) !== 'never') {
+    await ensureStarted();
+  }
+
   logger.info('Cortex MCP Bridge activated.');
 }
 
