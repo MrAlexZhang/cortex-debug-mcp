@@ -3,9 +3,9 @@ const esbuild = require('esbuild');
 const watch = process.argv.includes('--watch');
 
 const buildOptions = {
-  entryPoints: ['src/extension.ts'],
+  entryPoints: ['src/extension.ts', 'src/stdioProxy.ts'],
   bundle: true,
-  outfile: 'dist/extension.js',
+  outdir: 'dist',
   external: ['vscode'],        // VSCode API is provided by the host — never bundle it
   platform: 'node',
   target: 'node20',

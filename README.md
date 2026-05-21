@@ -1,188 +1,77 @@
-# Embedded AI Debug
+# Cortex Debug MCP
 
-A VSCode extension with **two features** for embedded development:
+VS Code extension for exposing **Cortex-Debug / PlatformIO** debug capabilities to MCP clients through **stdio**.
 
-1. **MCP Bridge** — exposes a local MCP server so AI assistants like **Claude Code** can read live debug state (variables, registers, memory) from **Cortex-Debug** and **PlatformIO** sessions.
-2. **Peripheral Tester** — configure and drive GPIO, SPI, I2C, USART, CAN, RTC, PWM directly via OpenOCD, **without any firmware on the chip**.
+## Upstream and secondary development
 
-![Demo](https://raw.githubusercontent.com/paulopalaoro/cortex-mcp-bridge/main/images/demo.gif)
+This project is based on the upstream project:
 
-```
-STM32 / ARM MCU  ──(ST-Link/JTAG)──  Cortex-Debug  ──(DAP)──  Extension  ──(MCP/SSE)──  Claude Code
-```
+- https://github.com/paulopalaoro/cortex-mcp-bridge
 
----
+Main changes in this fork:
 
-## Quick Start
+1. External MCP access changed from **SSE** to **stdio**
+2. Removed automatic `.mcp.json` creation/update
+3. Renamed extension identity to **`cortex-debug-mcp`**
+4. Renamed command IDs, config keys, output channel, and backend state file to avoid conflict with the upstream plugin
+5. Updated publisher/author information for this fork
 
-1. Install the extension from the VS Code Marketplace (**Embedded AI Debug** — publisher: `paulopalaoro`)
-2. Create a `.mcp.json` file in your project root (or run `Ctrl+Shift+P` → **AI Debug: Copy .mcp.json config to clipboard**)
-3. Start the MCP server manually: `Ctrl+Shift+P` → **AI Debug: Start Bridge Server**
-4. Start a Cortex-Debug or PlatformIO debug session — the server starts automatically from this point on
-5. Verify: status bar shows `$(debug-alt) MCP :7580` and `http://localhost:7580/health` returns `{"status":"ok"}`
+## What it can do
 
-> **Note:** The server starts automatically on VS Code startup and on every debug session. Use **AI Debug: Start Bridge Server** only if you need to start it manually.
+Current MCP tools mainly cover:
 
----
+- session status and call stack
+- variables, registers, memory, expression evaluation
+- set/remove breakpoints
+- pause / continue / step
+- raw `gdb_command`
+- OpenOCD-based live memory and peripheral tools
 
-## Available Commands (`Ctrl+Shift+P`)
-
-| Command | Description |
-|---|---|
-| **AI Debug: Start Bridge Server** | Start the MCP server manually |
-| **AI Debug: Stop Bridge Server** | Stop the MCP server |
-| **AI Debug: Show Server Status** | Show current server status and port |
-| **AI Debug: Copy .mcp.json config to clipboard** | Copy the MCP config snippet for your project |
-| **AI Debug: Open Peripheral Tester** | Open the peripheral register tester UI (requires server running) |
-| **AI Debug: Reset Auto-Start Permission** | Reset the auto-start permission dialog |
-
----
-
-## What it does
-
-When you pause the target at a breakpoint, Claude Code can call these tools directly:
-
-| Tool | Description |
-|---|---|
-| `get_session_info` | Check if a debug session is active and the target is paused |
-| `get_call_stack` | Current call stack with file names and line numbers |
-| `get_variables` | All local variables, arguments, globals in the current frame |
-| `expand_variable` | Expand structs, arrays, and pointer children |
-| `get_registers` | ARM core registers (r0–r12, SP, LR, PC, xPSR) |
-| `get_memory` | Raw memory read at any address — shown as hex dump |
-| `evaluate` | Evaluate any C/C++ expression (GDB watch syntax) |
-| `set_breakpoint` | Set a source-level breakpoint programmatically |
-| `pause_execution` | Halt the MCU |
-| `continue_execution` | Resume MCU execution |
-| `step` | Step over / into / out of current line |
-| `gdb_command` | Raw GDB command passthrough (escape hatch) |
-
----
-
-## Requirements
-
-- VSCode 1.85+
-- [Cortex-Debug](https://marketplace.visualstudio.com/items?itemName=marus25.cortex-debug) **or** [PlatformIO IDE](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide)
-- [Claude Code](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) (or any MCP-compatible client)
-- An ST-Link, J-Link, or CMSIS-DAP probe connected to your target
-
----
-
-## Installation
-
-### Option A — Build from source
+## Install from VSIX
 
 ```bash
-git clone https://github.com/your-org/cortex-mcp-bridge
-cd cortex-mcp-bridge
-npm install
-npm run build
-npm run package         # creates cortex-mcp-bridge-0.1.0.vsix
-code --install-extension cortex-mcp-bridge-0.1.0.vsix
+code --install-extension cortex-debug-mcp-<version>.vsix
 ```
 
-### Option B — Install from VSIX
+## MCP client configuration
 
-Download the `.vsix` from the Releases page and run:
-```bash
-code --install-extension cortex-mcp-bridge-0.1.0.vsix
-```
-
----
-
-## Setup
-
-### 1. Create `.mcp.json` in your project root
+If you use VS Code User `mcp.json` (`C:\Users\<user>\AppData\Roaming\Code\User\mcp.json`), a recommended version-independent config is:
 
 ```json
 {
-  "mcpServers": {
-    "cortex-debug": {
-      "type": "sse",
-      "url": "http://localhost:7580/sse"
+  "servers": {
+    "cortex-debug-mcp": {
+      "type": "stdio",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$root = Join-Path $env:USERPROFILE '.vscode\\extensions'; $ext = Get-ChildItem $root -Directory | Where-Object { $_.Name -like 'yuelongzhang.cortex-debug-mcp-*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (-not $ext) { throw 'cortex-debug-mcp extension not found' }; node (Join-Path $ext.FullName 'dist\\stdioProxy.js')"
+      ]
     }
   }
 }
 ```
 
-> **Tip:** Run **`Ctrl+Shift+P` → AI Debug: Copy .mcp.json config to clipboard** to generate this snippet automatically with the correct port.
+This avoids editing the config every time the extension version changes.
 
-### 2. Start a debug session
+## How to use
 
-The extension starts the MCP server automatically when a Cortex-Debug or PlatformIO debug session begins. You can also start it manually via:
+1. Install the `.vsix`
+2. Start a **Cortex-Debug** or **PlatformIO** debug session in VS Code
+3. Run `Cortex Debug MCP: Start Bridge Server`
+4. Restart or reload your MCP client
+5. Call tools such as `get_session_info`, `get_variables`, `set_breakpoint`, `remove_breakpoint`, `step`, `gdb_command`
 
-```
-Ctrl+Shift+P → AI Debug: Start Bridge Server
-```
-
-### 3. Verify
-
-Check the status bar — it shows `$(debug-alt) MCP :7580` when the server is running.
-
-Open a browser and visit `http://localhost:7580/health` — you should see `{"status":"ok"}`.
-
----
-
-## Usage with Claude Code
-
-Once connected, Claude Code can interact with your hardware directly. Examples:
-
-```
-"What are the current values of pitch, roll, and yaw_rate?"
-→ Claude calls get_variables → reads live RAM values
-
-"Read 16 bytes from rxBuf"
-→ Claude calls evaluate("&rxBuf[0]") to get address, then get_memory
-
-"Set a breakpoint at line 59 of main.cpp and continue"
-→ Claude calls set_breakpoint + continue_execution
-
-"Step through the loop 5 times and report how rxLen changes"
-→ Claude calls step + get_variables in a loop
-```
-
----
-
-## Settings
-
-| Setting | Default | Description |
-|---|---|---|
-| `embeddedAiDebug.port` | `7580` | Preferred TCP port. Auto-increments if busy. |
-| `embeddedAiDebug.autoStart` | `true` | Start server automatically when a debug session begins |
-| `embeddedAiDebug.logLevel` | `"info"` | Log verbosity: `"off"`, `"info"`, `"debug"` |
-
----
-
-## Architecture
-
-```
-extension.ts          — VSCode lifecycle, commands, status bar
-mcpServer.ts          — HTTP server with SSE transport (MCP protocol)
-dapBridge.ts          — All DAP calls via vscode.debug.activeDebugSession
-tools/
-  getSessionInfo.ts   — Session status check
-  getCallStack.ts     — stackTrace DAP request
-  getVariables.ts     — scopes + variables DAP requests
-  expandVariable.ts   — variables (children) DAP request
-  getRegisters.ts     — read-registers (Cortex-Debug custom)
-  getMemory.ts        — read-memory (Cortex-Debug custom)
-  evaluate.ts         — evaluate DAP request
-  setBreakpoint.ts    — setBreakpoints DAP request
-  continueExecution   — continue DAP request
-  pauseExecution      — pause DAP request
-  stepOver.ts         — next / stepIn / stepOut DAP requests
-  gdbCommand.ts       — execute-command (Cortex-Debug custom)
-```
-
----
 
 ## Limitations
 
-- Most tools require the target to be **paused** (halted at a breakpoint or manually paused). The Cortex-Debug adapter rejects read requests while the MCU is running.
-- The `get_registers` and `get_memory` tools use **Cortex-Debug custom DAP commands** — they work with `cortex-debug` and `platformio-debug` session types only.
-- Tested with STM32 targets. Should work with any ARM Cortex-M target supported by Cortex-Debug.
-
----
+- Most DAP read operations require the target to be **paused**
+- `get_registers` and `get_memory` depend on Cortex-Debug custom DAP requests
+- OpenOCD-based tools such as `get_chip_info`, `read_live_memory`, and peripheral helpers may fail in **J-Link-only** sessions
+- `gdb_command` can be used as an escape hatch for reset / monitor commands
 
 ## License
 

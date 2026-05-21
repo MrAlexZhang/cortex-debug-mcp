@@ -1,9 +1,10 @@
 {
-  "name": "embedded-ai-debug",
-  "displayName": "Embedded AI Debug",
+  "name": "cortex-debug-mcp",
+  "displayName": "Cortex Debug MCP",
   "description": "AI-powered debug bridge for embedded systems — exposes a local MCP server so Claude Code and other AI tools can read live debug state (variables, registers, memory, call stack) from Cortex-Debug sessions.",
-  "version": "0.0.7",
-  "publisher": "paulopalaoro",
+  "version": "0.0.1",
+  "publisher": "yuelongzhang",
+  "author": "yuelong.zhang",
   "icon": "images/icon.png",
   "license": "MIT",
   "repository": {
@@ -35,54 +36,50 @@
   "contributes": {
     "commands": [
       {
-        "command": "embedded-ai-debug.startServer",
-        "title": "AI Debug: Start Bridge Server"
+        "command": "cortex-debug-mcp.startServer",
+        "title": "Cortex Debug MCP: Start Bridge Server"
       },
       {
-        "command": "embedded-ai-debug.stopServer",
-        "title": "AI Debug: Stop Bridge Server"
+        "command": "cortex-debug-mcp.stopServer",
+        "title": "Cortex Debug MCP: Stop Bridge Server"
       },
       {
-        "command": "embedded-ai-debug.copyMcpConfig",
-        "title": "AI Debug: Copy .mcp.json config to clipboard"
+        "command": "cortex-debug-mcp.showStatus",
+        "title": "Cortex Debug MCP: Show Server Status"
       },
       {
-        "command": "embedded-ai-debug.showStatus",
-        "title": "AI Debug: Show Server Status"
+        "command": "cortex-debug-mcp.resetPermission",
+        "title": "Cortex Debug MCP: Reset Auto-Start Permission"
       },
       {
-        "command": "embedded-ai-debug.resetPermission",
-        "title": "AI Debug: Reset Auto-Start Permission"
-      },
-      {
-        "command": "embedded-ai-debug.openPeripheralTester",
-        "title": "AI Debug: Open Peripheral Tester",
+        "command": "cortex-debug-mcp.openPeripheralTester",
+        "title": "Cortex Debug MCP: Open Peripheral Tester",
         "icon": "$(circuit-board)"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "embedded-ai-debug.openPeripheralTester",
+          "command": "cortex-debug-mcp.openPeripheralTester",
           "group": "navigation",
-          "when": "embeddedAiDebugRunning"
+          "when": "cortexDebugMcpRunning"
         }
       ]
     },
     "configuration": {
-      "title": "Embedded AI Debug",
+      "title": "Cortex Debug MCP",
       "properties": {
-        "embeddedAiDebug.port": {
+        "cortexDebugMcp.port": {
           "type": "number",
           "default": 7580,
-          "description": "Local TCP port for the MCP HTTP/SSE server. If the port is busy, the extension tries the next available port automatically."
+          "description": "Internal localhost port for the bridge backend used by the bundled stdio proxy. If the port is busy, the extension tries the next available port automatically."
         },
-        "embeddedAiDebug.autoStart": {
+        "cortexDebugMcp.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically start the MCP server when a Cortex-Debug or PlatformIO debug session starts."
+          "description": "Automatically start the bridge backend when a Cortex-Debug or PlatformIO debug session starts."
         },
-        "embeddedAiDebug.logLevel": {
+        "cortexDebugMcp.logLevel": {
           "type": "string",
           "enum": [
             "off",
@@ -100,7 +97,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "vsce package --no-dependencies",
-    "install-ext": "code --install-extension cortex-mcp-bridge-0.1.0.vsix"
+    "install-ext": "code --install-extension cortex-debug-mcp-0.0.1.vsix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.2",

@@ -1,8 +1,9 @@
 /**
  * mcpServer.ts
  *
- * Hosts a local HTTP server implementing the MCP protocol over Server-Sent Events (SSE).
- * Claude Code connects to http://localhost:<port>/sse to discover and call tools.
+ * Hosts a local HTTP/SSE MCP backend used by the bundled stdio proxy.
+ * The extension keeps this process-local server because the tool handlers depend
+ * on VS Code APIs that are only available inside the extension host.
  *
  * Each GET /sse creates a new persistent SSE channel.
  * Claude Code POSTs tool calls to /message, and responses flow back over SSE.
@@ -22,7 +23,7 @@ export class McpHttpServer {
 
   constructor(private preferredPort: number) {
     this.mcpServer = new McpServer({
-      name: 'cortex-debug-bridge',
+      name: 'cortex-debug-mcp',
       version: '0.1.0'
     });
     registerAllTools(this.mcpServer);

@@ -1,13 +1,14 @@
 /**
- * extension.ts — Cortex-Debug MCP Bridge
+ * extension.ts — Cortex Debug MCP
  *
  * Activates when a Cortex-Debug or PlatformIO debug session starts.
- * Starts a local MCP HTTP/SSE server so Claude Code (or any MCP client)
- * can read live debug state: variables, registers, memory, call stack.
+ * Starts a local MCP backend so a stdio MCP proxy can expose the tools to
+ * external clients while the extension keeps access to VS Code debug APIs.
  */
 
 import * as vscode from 'vscode';
 import { McpHttpServer } from './mcpServer';
+import { clearBackendState, getBackendStatePath, writeBackendState } from './backendState';
 import { PeripheralTesterPanel } from './panels/PeripheralTesterPanel';
 import { OpenOcdManager } from './openocdManager';
 import * as logger from './logger';
@@ -16,13 +17,13 @@ let server: McpHttpServer | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
-  logger.info('Cortex MCP Bridge activating...');
+  logger.info('Cortex Debug MCP activating...');
 
-  const cfg = () => vscode.workspace.getConfiguration('embeddedAiDebug');
+  const cfg = () => vscode.workspace.getConfiguration('cortexDebugMcp');
 
   // ── Status bar item ─────────────────────────────────────────────────────────
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
-  statusBarItem.command = 'embedded-ai-debug.showStatus';
+  statusBarItem.command = 'cortex-debug-mcp.showStatus';
   updateStatusBar('stopped');
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
@@ -34,113 +35,50 @@ export async function activate(context: vscode.ExtensionContext) {
     server = new McpHttpServer(port);
     try {
       const actualPort = await server.start();
+      await writeBackendState(actualPort);
       updateStatusBar('running', actualPort);
-      await ensureMcpJson(actualPort);
     } catch (e: unknown) {
-      const msg = `Cortex MCP Bridge: Failed to start server — ${(e as Error).message}`;
+      const msg = `Cortex Debug MCP: Failed to start server — ${(e as Error).message}`;
       logger.error(msg);
       vscode.window.showErrorMessage(msg);
       updateStatusBar('error');
     }
   }
 
-  // ── Helper: create .mcp.json in workspace root if missing ───────────────────
-  async function ensureMcpJson(port: number) {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders?.length) return;
-
-    const mcpContent = JSON.stringify(
-      { mcpServers: { 'cortex-debug': { type: 'sse', url: `http://localhost:${port}/sse` } } },
-      null, 2
-    );
-
-    for (const folder of folders) {
-      const mcpUri = vscode.Uri.joinPath(folder.uri, '.mcp.json');
-      try {
-        await vscode.workspace.fs.stat(mcpUri);
-        // File exists — check if URL matches current port
-        const existing = Buffer.from(
-          await vscode.workspace.fs.readFile(mcpUri)
-        ).toString('utf8');
-        if (existing.includes(`localhost:${port}/sse`)) {
-          logger.debug(`.mcp.json already up to date in ${folder.name}`);
-          return;
-        }
-        // Port changed — ask before overwriting
-        const update = await vscode.window.showInformationMessage(
-          `.mcp.json in "${folder.name}" points to a different port. Update to port ${port}?`,
-          'Update', 'Keep existing'
-        );
-        if (update !== 'Update') return;
-        await vscode.workspace.fs.writeFile(mcpUri, Buffer.from(mcpContent, 'utf8'));
-        logger.info(`.mcp.json updated in ${folder.name}`);
-        vscode.window.showInformationMessage(`.mcp.json updated in "${folder.name}".`);
-      } catch {
-        // File does not exist — create it
-        await vscode.workspace.fs.writeFile(mcpUri, Buffer.from(mcpContent, 'utf8'));
-        logger.info(`.mcp.json created in ${folder.name}`);
-        vscode.window.showInformationMessage(
-          `.mcp.json created in "${folder.name}" — Claude Code is now connected to the MCP bridge.`
-        );
-      }
-    }
-  }
-
   // ── Commands ─────────────────────────────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('embedded-ai-debug.startServer', async () => {
+    vscode.commands.registerCommand('cortex-debug-mcp.startServer', async () => {
       await ensureStarted();
       if (server?.running) {
         vscode.window.showInformationMessage(
-          `Cortex MCP Bridge running on port ${server.port}. Add .mcp.json to your project to connect Claude Code.`
+          `Cortex Debug MCP backend is running. Launch the bundled stdio proxy to connect your MCP client.`
         );
         logger.getChannel().show(true);
       }
     }),
 
-    vscode.commands.registerCommand('embedded-ai-debug.stopServer', () => {
+    vscode.commands.registerCommand('cortex-debug-mcp.stopServer', async () => {
       server?.stop();
       server = undefined;
+      await clearBackendState();
       updateStatusBar('stopped');
-      vscode.window.showInformationMessage('Cortex MCP Bridge stopped.');
-    }),
-
-    vscode.commands.registerCommand('embedded-ai-debug.copyMcpConfig', async () => {
-      if (!server?.running) {
-        vscode.window.showWarningMessage('Server is not running. Start it first.');
-        return;
-      }
-      const port = server.port!;
-      const snippet = JSON.stringify(
-        {
-          mcpServers: {
-            'cortex-debug': {
-              type: 'sse',
-              url: `http://localhost:${port}/sse`
-            }
-          }
-        },
-        null,
-        2
-      );
-      await vscode.env.clipboard.writeText(snippet);
       vscode.window.showInformationMessage(
-        `MCP config copied! Paste it into a .mcp.json file at your project root.`
+        'Cortex Debug MCP backend stopped.'
       );
     }),
 
-    vscode.commands.registerCommand('embedded-ai-debug.showStatus', () => {
+    vscode.commands.registerCommand('cortex-debug-mcp.showStatus', () => {
       const channel = logger.getChannel();
       channel.show(true);
       if (server?.running) {
         channel.appendLine(`\n── Status ──────────────────────────────────────`);
-        channel.appendLine(`Server:   running on http://localhost:${server.port}`);
-        channel.appendLine(`SSE URL:  http://localhost:${server.port}/sse`);
-        channel.appendLine(`Health:   http://localhost:${server.port}/health`);
+        channel.appendLine(`Backend:  running on http://127.0.0.1:${server.port}`);
+        channel.appendLine(`Proxy:    node <extension-dist>\\stdioProxy.js`);
+        channel.appendLine(`State:    ${getBackendStatePath()}`);
         channel.appendLine(`Session:  ${vscode.debug.activeDebugSession?.name ?? 'none'}`);
         channel.appendLine(`────────────────────────────────────────────────\n`);
       } else {
-        channel.appendLine('\nServer is stopped. Run "Cortex MCP: Start Bridge Server".\n');
+        channel.appendLine('\nBridge backend is stopped. Run "Cortex Debug MCP: Start Bridge Server".\n');
       }
     })
   );
@@ -166,7 +104,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     if (stored === 'always') {
-      logger.info(`Auto-starting MCP server for session "${sessionName}".`);
+      logger.info(`Auto-starting Cortex Debug MCP backend for session "${sessionName}".`);
       await ensureStarted();
       return;
     }
@@ -174,7 +112,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // First time — ask the user
     const choice = await vscode.window.showInformationMessage(
       `Cortex-Debug session "${sessionName}" started.\n` +
-      `Start the MCP Bridge server so Claude Code can read live debug state?`,
+      `Start the Cortex Debug MCP backend so Claude Code can read live debug state?`,
       { modal: false },
       'Always start',
       'Start once',
@@ -189,7 +127,7 @@ export async function activate(context: vscode.ExtensionContext) {
     } else if (choice === 'Never') {
       await context.globalState.update(PERM_KEY, 'never');
       vscode.window.showInformationMessage(
-        'Auto-start disabled. You can still start it manually with "Cortex MCP: Start Bridge Server".'
+        'Auto-start disabled. You can still start it manually with "Cortex Debug MCP: Start Bridge Server".'
       );
     }
     // Dismissed (undefined) → do nothing, ask again next time
@@ -197,12 +135,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Reset permission command ─────────────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('embedded-ai-debug.resetPermission', async () => {
+    vscode.commands.registerCommand('cortex-debug-mcp.resetPermission', async () => {
       await context.globalState.update(PERM_KEY, undefined);
       vscode.window.showInformationMessage('Auto-start permission reset. You will be asked again on the next debug session.');
     }),
 
-    vscode.commands.registerCommand('embedded-ai-debug.openPeripheralTester', () => {
+    vscode.commands.registerCommand('cortex-debug-mcp.openPeripheralTester', () => {
       PeripheralTesterPanel.createOrShow(context);
     })
   );
@@ -239,11 +177,12 @@ export async function activate(context: vscode.ExtensionContext) {
     await ensureStarted();
   }
 
-  logger.info('Cortex MCP Bridge activated.');
+  logger.info('Cortex Debug MCP activated.');
 }
 
 export function deactivate() {
   server?.stop();
+  void clearBackendState();
   OpenOcdManager.instance.stop();
   logger.dispose();
 }
@@ -254,20 +193,20 @@ function updateStatusBar(state: 'running' | 'stopped' | 'error', port?: number) 
   if (!statusBarItem) return;
   switch (state) {
     case 'running':
-      statusBarItem.text = `$(debug-alt) MCP :${port}`;
-      statusBarItem.tooltip = `Cortex MCP Bridge running on port ${port}\nClick to show log`;
+      statusBarItem.text = `$(debug-alt) MCP Ready`;
+      statusBarItem.tooltip = `Cortex Debug MCP backend ready on port ${port}\nClick to show log`;
       statusBarItem.color = new vscode.ThemeColor('statusBarItem.prominentForeground');
       statusBarItem.backgroundColor = undefined;
       break;
     case 'stopped':
       statusBarItem.text = `$(debug-disconnect) MCP`;
-      statusBarItem.tooltip = 'Cortex MCP Bridge stopped\nClick to show log';
+      statusBarItem.tooltip = 'Cortex Debug MCP stopped\nClick to show log';
       statusBarItem.color = undefined;
       statusBarItem.backgroundColor = undefined;
       break;
     case 'error':
       statusBarItem.text = `$(error) MCP`;
-      statusBarItem.tooltip = 'Cortex MCP Bridge error — click to show log';
+      statusBarItem.tooltip = 'Cortex Debug MCP error — click to show log';
       statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       break;
   }
