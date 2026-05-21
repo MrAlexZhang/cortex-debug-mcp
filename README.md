@@ -4,7 +4,12 @@ VS Code extension for exposing **Cortex-Debug / PlatformIO** debug capabilities 
 
 ## Upstream and secondary development
 
-This project is based on the upstream project:
+This project is open source at:
+
+- https://github.com/MrAlexZhang/cortex-debug-mcp
+
+This project is a secondary development project.
+Based on the upstream project:
 
 - https://github.com/paulopalaoro/cortex-mcp-bridge
 

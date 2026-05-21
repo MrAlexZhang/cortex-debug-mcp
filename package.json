@@ -1,16 +1,17 @@
 {
   "name": "cortex-debug-mcp",
   "displayName": "Cortex Debug MCP",
-  "description": "AI-powered debug bridge for embedded systems — exposes a local MCP server so Claude Code and other AI tools can read live debug state (variables, registers, memory, call stack) from Cortex-Debug sessions.",
-  "version": "0.0.1",
+  "description": "VS Code extension for exposing Cortex-Debug / PlatformIO debug capabilities to MCP clients through stdio.",
+  "version": "1.2.0",
   "publisher": "yuelongzhang",
   "author": "yuelong.zhang",
   "icon": "images/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/paulopalaoro/cortex-mcp-bridge"
+    "url": "https://github.com/MrAlexZhang/cortex-debug-MCP-server"
   },
+  "homepage": "https://github.com/MrAlexZhang/cortex-debug-MCP-server",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -97,7 +98,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "vsce package --no-dependencies",
-    "install-ext": "code --install-extension cortex-debug-mcp-0.0.1.vsix"
+    "install-ext": "code --install-extension cortex-debug-mcp-1.2.0.vsix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.2",
