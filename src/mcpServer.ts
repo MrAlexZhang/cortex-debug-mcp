@@ -24,7 +24,7 @@ export class McpHttpServer {
   constructor(private preferredPort: number) {
     this.mcpServer = new McpServer({
       name: 'cortex-debug-mcp',
-      version: '0.1.0'
+      version: '1.3.0'
     });
     registerAllTools(this.mcpServer);
   }
@@ -80,7 +80,7 @@ export class McpHttpServer {
     // Health-check — useful for Claude Code to verify the server is up
     if (url === '/health' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', version: '0.1.0' }));
+      res.end(JSON.stringify({ status: 'ok', version: '1.3.0' }));
       return;
     }
 

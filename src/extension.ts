@@ -80,70 +80,19 @@ export async function activate(context: vscode.ExtensionContext) {
       } else {
         channel.appendLine('\nBridge backend is stopped. Run "Cortex Debug MCP: Start Bridge Server".\n');
       }
-    })
-  );
-
-  // ── Permission-aware auto-start ──────────────────────────────────────────────
-  //
-  // Stored in globalState so it persists across VSCode restarts:
-  //   'always'  — start automatically without asking
-  //   'never'   — never auto-start (user can still start manually)
-  //   undefined — not yet decided → show dialog
-  //
-  const PERM_KEY = 'autoStartPermission';
-
-  async function maybeAutoStart(sessionName: string) {
-    if (!cfg().get<boolean>('autoStart', true)) return;
-    if (server?.running) return;
-
-    const stored = context.globalState.get<string>(PERM_KEY);
-
-    if (stored === 'never') {
-      logger.info('Auto-start skipped (user chose Never).');
-      return;
-    }
-
-    if (stored === 'always') {
-      logger.info(`Auto-starting Cortex Debug MCP backend for session "${sessionName}".`);
-      await ensureStarted();
-      return;
-    }
-
-    // First time — ask the user
-    const choice = await vscode.window.showInformationMessage(
-      `Cortex-Debug session "${sessionName}" started.\n` +
-      `Start the Cortex Debug MCP backend so Claude Code can read live debug state?`,
-      { modal: false },
-      'Always start',
-      'Start once',
-      'Never'
-    );
-
-    if (choice === 'Always start') {
-      await context.globalState.update(PERM_KEY, 'always');
-      await ensureStarted();
-    } else if (choice === 'Start once') {
-      await ensureStarted();
-    } else if (choice === 'Never') {
-      await context.globalState.update(PERM_KEY, 'never');
-      vscode.window.showInformationMessage(
-        'Auto-start disabled. You can still start it manually with "Cortex Debug MCP: Start Bridge Server".'
-      );
-    }
-    // Dismissed (undefined) → do nothing, ask again next time
-  }
-
-  // ── Reset permission command ─────────────────────────────────────────────────
-  context.subscriptions.push(
-    vscode.commands.registerCommand('cortex-debug-mcp.resetPermission', async () => {
-      await context.globalState.update(PERM_KEY, undefined);
-      vscode.window.showInformationMessage('Auto-start permission reset. You will be asked again on the next debug session.');
     }),
 
     vscode.commands.registerCommand('cortex-debug-mcp.openPeripheralTester', () => {
       PeripheralTesterPanel.createOrShow(context);
     })
   );
+
+  async function maybeAutoStart(sessionName: string) {
+    if (!cfg().get<boolean>('autoStart', true)) return;
+    if (server?.running) return;
+    logger.info(`Auto-starting Cortex Debug MCP backend for session "${sessionName}".`);
+    await ensureStarted();
+  }
 
   // ── Listen for debug sessions ─────────────────────────────────────────────────
   context.subscriptions.push(
@@ -172,8 +121,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Starts silently on activation (onStartupFinished) without waiting for a
   // debug session — this ensures the MCP SSE endpoint is up before Claude Code
   // tries to connect when the workspace opens.
-  if (cfg().get<boolean>('autoStart', true) &&
-      context.globalState.get<string>(PERM_KEY) !== 'never') {
+  if (cfg().get<boolean>('autoStart', true)) {
     await ensureStarted();
   }
 

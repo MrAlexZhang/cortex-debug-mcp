@@ -4,26 +4,76 @@ import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 
 // ── nm binary candidates ───────────────────────────────────────────────────────
 
+const platformioCoreDir = process.env.PLATFORMIO_CORE_DIR ?? path.join(os.homedir(), '.platformio');
+const nmExeName = process.platform === 'win32' ? 'arm-none-eabi-nm.exe' : 'arm-none-eabi-nm';
+const envBinDir =
+  process.env.ARM_GNU_TOOLCHAIN_BIN ??
+  process.env.GCC_ARM_NONE_EABI_BIN ??
+  process.env.GCC_ARM_NONE_EABI_PATH;
+
 const NM_CANDIDATES = [
   // PlatformIO toolchain (most common for embedded)
-  'C:/Users/paulo/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-nm.exe',
-  // ARM GNU Toolchain system install
-  'C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/11.3 rel1/bin/arm-none-eabi-nm.exe',
-  'C:/Program Files/Arm GNU Toolchain arm-none-eabi/11.3 rel1/bin/arm-none-eabi-nm.exe',
-  // System PATH fallback
-  'arm-none-eabi-nm',
-  'nm',
-];
+  path.join(platformioCoreDir, 'packages', 'toolchain-gccarmnoneeabi', 'bin', nmExeName),
+  // Optional env override for custom installs
+  envBinDir ? path.join(envBinDir, nmExeName) : undefined,
+].filter((v): v is string => !!v);
+
+function getWindowsToolchainCandidates(): string[] {
+  if (process.platform !== 'win32') return [];
+
+  const roots = [
+    'C:/Program Files/Arm GNU Toolchain arm-none-eabi',
+    'C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi'
+  ];
+
+  const results: string[] = [];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      results.push(path.join(root, entry.name, 'bin', 'arm-none-eabi-nm.exe'));
+    }
+  }
+
+  return results;
+}
+
+function findCommandInPath(command: string): string | undefined {
+  const locator = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const output = cp.execFileSync(locator, [command], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    return output
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .find(Boolean);
+  } catch {
+    return undefined;
+  }
+}
 
 function findNm(): string | undefined {
-  for (const candidate of NM_CANDIDATES) {
-    if (!path.isAbsolute(candidate)) return candidate; // let shell resolve
+  const absoluteCandidates = [
+    ...NM_CANDIDATES,
+    ...getWindowsToolchainCandidates()
+  ];
+
+  for (const candidate of absoluteCandidates) {
     if (fs.existsSync(candidate)) return candidate;
   }
-  return undefined;
+
+  return (
+    findCommandInPath('arm-none-eabi-nm') ??
+    findCommandInPath('arm-none-eabi-nm.exe') ??
+    findCommandInPath('nm')
+  );
 }
 
 // ── ELF file discovery ────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
   "name": "cortex-debug-mcp",
   "displayName": "Cortex Debug MCP",
   "description": "VS Code extension for exposing Cortex-Debug / PlatformIO debug capabilities to MCP clients through stdio.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "yuelongzhang",
   "author": "yuelong.zhang",
   "icon": "images/icon.png",
@@ -47,10 +47,6 @@
       {
         "command": "cortex-debug-mcp.showStatus",
         "title": "Cortex Debug MCP: Show Server Status"
-      },
-      {
-        "command": "cortex-debug-mcp.resetPermission",
-        "title": "Cortex Debug MCP: Reset Auto-Start Permission"
       },
       {
         "command": "cortex-debug-mcp.openPeripheralTester",
@@ -98,7 +94,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "vsce package --no-dependencies",
-    "install-ext": "code --install-extension cortex-debug-mcp-1.2.0.vsix"
+    "install-ext": "code --install-extension cortex-debug-mcp-1.3.0.vsix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.2",
