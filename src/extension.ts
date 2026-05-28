@@ -11,10 +11,26 @@ import { McpHttpServer } from './mcpServer';
 import { clearBackendState, getBackendStatePath, writeBackendState } from './backendState';
 import { PeripheralTesterPanel } from './panels/PeripheralTesterPanel';
 import { OpenOcdManager } from './openocdManager';
+import * as dap from './dapBridge';
 import * as logger from './logger';
 
 let server: McpHttpServer | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
+
+async function runCleanDebugState() {
+  try {
+    const result = await dap.cleanDebugState();
+    const msg = result.hadSession
+      ? 'Debug state cleaned: cleared MCP cache and issued GDB "delete breakpoints" (includes watchpoints).'
+      : 'Debug state cleaned: cleared MCP cache (no active supported debug session).';
+    logger.info(msg);
+    vscode.window.showInformationMessage(msg);
+  } catch (e: unknown) {
+    const msg = `Failed to clean debug state: ${(e as Error).message}`;
+    logger.error(msg);
+    vscode.window.showErrorMessage(msg);
+  }
+}
 
 export async function activate(context: vscode.ExtensionContext) {
   logger.info('Cortex Debug MCP activating...');
@@ -23,7 +39,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Status bar item ─────────────────────────────────────────────────────────
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
-  statusBarItem.command = 'cortex-debug-mcp.showStatus';
+  statusBarItem.command = 'cortex-debug-mcp.cleanDebugState';
   updateStatusBar('stopped');
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
@@ -58,12 +74,18 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('cortex-debug-mcp.stopServer', async () => {
+      let stoppedManaged = 0;
+      if (cfg().get<boolean>('autoManageDebugSession', false)) {
+        stoppedManaged = await dap.stopManagedSessions();
+      }
       server?.stop();
       server = undefined;
       await clearBackendState();
       updateStatusBar('stopped');
       vscode.window.showInformationMessage(
-        'Cortex Debug MCP backend stopped.'
+        stoppedManaged > 0
+          ? `Cortex Debug MCP backend stopped. Also stopped ${stoppedManaged} managed debug session(s).`
+          : 'Cortex Debug MCP backend stopped.'
       );
     }),
 
@@ -80,6 +102,10 @@ export async function activate(context: vscode.ExtensionContext) {
       } else {
         channel.appendLine('\nBridge backend is stopped. Run "Cortex Debug MCP: Start Bridge Server".\n');
       }
+    }),
+
+    vscode.commands.registerCommand('cortex-debug-mcp.cleanDebugState', async () => {
+      await runCleanDebugState();
     }),
 
     vscode.commands.registerCommand('cortex-debug-mcp.openPeripheralTester', () => {
@@ -105,6 +131,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
     vscode.debug.onDidTerminateDebugSession(session => {
       logger.info(`Debug session ended: ${session.name}`);
+      const supported = ['cortex-debug', 'platformio-debug'];
+      if (supported.includes(session.type)) {
+        dap.clearBreakpointCache();
+      }
       // Keep the server running — user may restart the debug session
     })
   );
@@ -129,6 +159,7 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  void dap.stopManagedSessions();
   server?.stop();
   void clearBackendState();
   OpenOcdManager.instance.stop();
@@ -141,20 +172,20 @@ function updateStatusBar(state: 'running' | 'stopped' | 'error', port?: number) 
   if (!statusBarItem) return;
   switch (state) {
     case 'running':
-      statusBarItem.text = `$(debug-alt) MCP Ready`;
-      statusBarItem.tooltip = `Cortex Debug MCP backend ready on port ${port}\nClick to show log`;
+      statusBarItem.text = `$(clear-all) MCP Clear`;
+      statusBarItem.tooltip = `Cortex Debug MCP backend ready on port ${port}\nClick to clean debug state`;
       statusBarItem.color = new vscode.ThemeColor('statusBarItem.prominentForeground');
       statusBarItem.backgroundColor = undefined;
       break;
     case 'stopped':
-      statusBarItem.text = `$(debug-disconnect) MCP`;
-      statusBarItem.tooltip = 'Cortex Debug MCP stopped\nClick to show log';
+      statusBarItem.text = `$(clear-all) MCP Clear`;
+      statusBarItem.tooltip = 'Cortex Debug MCP stopped\nClick to clear cached debug state';
       statusBarItem.color = undefined;
       statusBarItem.backgroundColor = undefined;
       break;
     case 'error':
-      statusBarItem.text = `$(error) MCP`;
-      statusBarItem.tooltip = 'Cortex Debug MCP error — click to show log';
+      statusBarItem.text = `$(clear-all) MCP Clear`;
+      statusBarItem.tooltip = 'Cortex Debug MCP error — click to try cleaning debug state';
       statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       break;
   }

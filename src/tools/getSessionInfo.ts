@@ -15,7 +15,7 @@ export function registerGetSessionInfo(server: McpServer) {
             type: 'text' as const,
             text: JSON.stringify({
               active: false,
-              message: 'No active debug session. Start a Cortex-Debug or PlatformIO debug session.'
+              message: 'No active debug session. Start one manually, call start_debug_session, or enable cortexDebugMcp.autoManageDebugSession.'
             }, null, 2)
           }]
         };

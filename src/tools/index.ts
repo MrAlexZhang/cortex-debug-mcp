@@ -11,6 +11,8 @@ import { registerPauseExecution } from './pauseExecution';
 import { registerStepOver } from './stepOver';
 import { registerGdbCommand } from './gdbCommand';
 import { registerGetSessionInfo } from './getSessionInfo';
+import { registerStartDebugSession } from './startDebugSession';
+import { registerStopDebugSession } from './stopDebugSession';
 import { registerReadLiveMemory } from './readLiveMemory';
 import { registerWriteMemory } from './writeMemory';
 import { registerRemoveBreakpoint } from './removeBreakpoint';
@@ -25,6 +27,8 @@ import { registerI2cTransaction } from './i2cTransaction';
 
 export function registerAllTools(server: McpServer) {
   // ── DAP / Cortex-Debug tools (require paused target or active debug session) ──
+  registerStartDebugSession(server);
+  registerStopDebugSession(server);
   registerGetSessionInfo(server);
   registerGetSymbols(server);
   registerGetCallStack(server);

@@ -2,7 +2,7 @@
   "name": "cortex-debug-mcp",
   "displayName": "Cortex Debug MCP",
   "description": "VS Code extension for exposing Cortex-Debug / PlatformIO debug capabilities to MCP clients through stdio.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "publisher": "yuelongzhang",
   "author": "yuelong.zhang",
   "icon": "images/icon.png",
@@ -49,6 +49,10 @@
         "title": "Cortex Debug MCP: Show Server Status"
       },
       {
+        "command": "cortex-debug-mcp.cleanDebugState",
+        "title": "Cortex Debug MCP: Clean Debug State"
+      },
+      {
         "command": "cortex-debug-mcp.openPeripheralTester",
         "title": "Cortex Debug MCP: Open Peripheral Tester",
         "icon": "$(circuit-board)"
@@ -76,6 +80,11 @@
           "default": true,
           "description": "Automatically start the bridge backend when a Cortex-Debug or PlatformIO debug session starts."
         },
+        "cortexDebugMcp.autoManageDebugSession": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start a supported debug session when MCP tools require one, and stop MCP-managed sessions when the bridge stops. Default is manual debug session control."
+        },
         "cortexDebugMcp.logLevel": {
           "type": "string",
           "enum": [
@@ -94,7 +103,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "vsce package --no-dependencies",
-    "install-ext": "code --install-extension cortex-debug-mcp-1.3.0.vsix"
+    "install-ext": "code --install-extension cortex-debug-mcp-1.4.0.vsix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.2",
